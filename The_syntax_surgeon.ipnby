@@ -1,0 +1,165 @@
+# ==============================
+# Syntax Surgeon AI Code Fixer
+# ==============================
+
+import gradio as gr
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+import torch
+import ast
+import re
+import black
+import autopep8
+from datetime import datetime
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+
+# ==============================
+# Load Granite Model
+# ==============================
+
+MODEL_NAME = "ibm-granite/granite-3.3-2b-instruct"
+
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForCausalLM.from_pretrained(MODEL_NAME)
+
+generator = pipeline(
+    "text-generation",
+    model=model,
+    tokenizer=tokenizer,
+    device=0 if torch.cuda.is_available() else -1
+)
+
+# ==============================
+# Python Code Detection
+# ==============================
+
+def detect_python_code(text):
+
+    python_patterns = [
+        r"def\s+\w+\(",
+        r"class\s+\w+",
+        r"import\s+\w+",
+        r"for\s+\w+\s+in",
+        r"print\(",
+    ]
+
+    for pattern in python_patterns:
+        if re.search(pattern, text):
+            return True
+
+    return False
+
+
+# ==============================
+# Fix Python Syntax
+# ==============================
+
+def fix_python_code(code):
+
+    try:
+        ast.parse(code)
+        valid = True
+    except SyntaxError:
+        valid = False
+
+    try:
+        code = autopep8.fix_code(code)
+        code = black.format_str(code, mode=black.FileMode())
+    except Exception:
+        pass
+
+    return code, valid
+
+
+# ==============================
+# AI Response
+# ==============================
+
+def ai_chat(user_message, history):
+
+    if detect_python_code(user_message):
+
+        fixed_code, valid = fix_python_code(user_message)
+
+        response = "### Python Code Detected\n"
+
+        if valid:
+            response += "Code is syntactically correct.\n\n"
+        else:
+            response += "Syntax issues detected and fixed.\n\n"
+
+        response += "### Fixed Code:\n"
+        response += f"```python\n{fixed_code}\n```"
+
+        return response
+
+    else:
+
+        messages = [
+            {"role": "user", "content": user_message}
+        ]
+
+        result = generator(
+            messages,
+            max_new_tokens=200,
+            temperature=0.7,
+            top_p=0.9
+        )
+
+        return result[0]["generated_text"]
+
+
+# ==============================
+# Export Chat to PDF
+# ==============================
+
+def export_chat(history):
+
+    file_name = f"chat_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+
+    styles = getSampleStyleSheet()
+    elements = []
+
+    for user, bot in history:
+        elements.append(Paragraph(f"<b>User:</b> {user}", styles["Normal"]))
+        elements.append(Paragraph(f"<b>Bot:</b> {bot}", styles["Normal"]))
+        elements.append(Spacer(1, 10))
+
+    doc = SimpleDocTemplate(file_name)
+    doc.build(elements)
+
+    return file_name
+
+
+# ==============================
+# Gradio Interface
+# ==============================
+
+with gr.Blocks(title="Syntax Surgeon") as demo:
+
+    gr.Markdown("# 🧠 Syntax Surgeon")
+    gr.Markdown("AI Powered Code Fixer & Chatbot")
+
+    chatbot = gr.Chatbot()
+    msg = gr.Textbox(label="Enter your message or Python code")
+
+    clear = gr.Button("Clear Chat")
+    export = gr.Button("Export Chat to PDF")
+
+    history = []
+
+    def respond(message, chat_history):
+
+        reply = ai_chat(message, chat_history)
+        chat_history.append((message, reply))
+
+        return "", chat_history
+
+
+    msg.submit(respond, [msg, chatbot], [msg, chatbot])
+
+    clear.click(lambda: None, None, chatbot, queue=False)
+
+    export.click(export_chat, chatbot)
+
+demo.launch()
