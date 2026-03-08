@@ -1,0 +1,11 @@
+transformers
+
+torch
+
+gradio
+
+black
+
+autopep8
+
+reportlab
